@@ -1,0 +1,78 @@
+#!/bin/bash
+
+# This works by looking at the output of 'go build' for dependency errors,
+# and downloading those dependencies.
+
+# Note: there's a neater way, which is to use the golang tokenizer package
+# in go/parser.  Still, 2-lines of shell script is pretty good.
+
+# Algorithm here is to keep going until either the code builds, or you get
+# the same set of dependency errors you got in the previous build attempt.
+
+# This gets a package using go get - straightforward except that there's a
+# special-case hack which gets the right version of Thrift for Prometheus.
+get_pkg() {
+
+    if [ "${1}" = github.com/prometheus/client_golang/prometheus ]
+    then
+        echo Kludging thrift...
+        if [ ! -d ${GOPATH}/src/github.com/apache/thrift ]
+        then
+	    mkdir -p ${GOPATH}/src/github.com/apache/thrift
+	    git clone https://github.com/apache/thrift \
+		${GOPATH}/src/github.com/apache/thrift
+	    (cd ${GOPATH}/src/github.com/apache/thrift/lib/go/thrift; \
+		git checkout 0.10.0; \
+		go build)
+        fi          
+    fi
+    go get ${pkg}
+}
+
+# Forces something to happen.
+old_pkgs="__INITIALISED__"
+
+while true
+do
+
+  echo '*** Try a build...'
+  go build >/dev/null 2>&1
+  if [ $? -eq 0 ]
+  then
+    echo Build works, stopping.
+    exit 0
+  fi
+
+  echo '*** Find out which packages are needed'
+  pkgs=$(go build 2>&1 | grep 'cannot find package' | \
+     sed -e 's/^[^"]*"//' -e 's/".*$//')
+  echo Packages: ${pkgs}
+
+  if [ "${pkgs}" == "${old_pkgs}" ]
+  then
+    echo Made no progress since last time.  Giving up!
+    exit 1
+  fi
+
+  echo '*** Fetch packages'
+  for pkg in ${pkgs}
+  do
+   
+    echo ${pkg}
+    get_pkg ${pkg}
+    if [ $? -ne 0 ]
+    then
+      echo "Failed to get package ${pkg}"
+      exit 1
+    fi
+  done
+
+done
+
+
+
+
+
+
+
+
